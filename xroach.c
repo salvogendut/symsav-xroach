@@ -388,18 +388,18 @@ _transfer Ctrl_Radio cfg_rad_fa = { &tmp_speed,   "Fast",   (COLOR_BLACK<<2)|COL
 // Layout: 200×62 content area
 //   Frame "Settings" covers rows 0..38
 //   Row 1 (Roaches): y=10  Row 2 (Speed): y=22  Buttons: y=46
-_transfer Ctrl ccc0  = { 0,  C_AREA,   -1, AREA_16COLOR|COLOR_BLACK,          0,  0, 200, 62, 0 };
-_transfer Ctrl ccc1  = { 0,  C_TFRAME, -1, (unsigned short)&cfg_tf,           2,  1, 196, 38, 0 };
-_transfer Ctrl ccc2  = { 0,  C_TEXT,   -1, (unsigned short)&cfg_lbl_r,        8, 10,  52,  8, 0 };
-_transfer Ctrl ccc3  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_r3,      64, 10,  18,  8, 0 };
-_transfer Ctrl ccc4  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_r6,      84, 10,  18,  8, 0 };
-_transfer Ctrl ccc5  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_r9,     104, 10,  18,  8, 0 };
-_transfer Ctrl ccc6  = { 0,  C_TEXT,   -1, (unsigned short)&cfg_lbl_s,        8, 22,  52,  8, 0 };
-_transfer Ctrl ccc7  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_sl,      64, 22,  30,  8, 0 };
-_transfer Ctrl ccc8  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_no,      96, 22,  42,  8, 0 };
-_transfer Ctrl ccc9  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_fa,     140, 22,  30,  8, 0 };
-_transfer Ctrl ccc10 = { 10, C_BUTTON, -1, (unsigned short)"OK",             50, 46,  32, 12, 0 };
-_transfer Ctrl ccc11 = { 11, C_BUTTON, -1, (unsigned short)"Cancel",         90, 46,  52, 12, 0 };
+// No explicit C_AREA: SymbOS draws the default window background automatically
+_transfer Ctrl ccc0  = { 0,  C_TFRAME, -1, (unsigned short)&cfg_tf,           2,  1, 196, 38, 0 };
+_transfer Ctrl ccc1  = { 0,  C_TEXT,   -1, (unsigned short)&cfg_lbl_r,        8, 10,  52,  8, 0 };
+_transfer Ctrl ccc2  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_r3,      64, 10,  18,  8, 0 };
+_transfer Ctrl ccc3  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_r6,      84, 10,  18,  8, 0 };
+_transfer Ctrl ccc4  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_r9,     104, 10,  18,  8, 0 };
+_transfer Ctrl ccc5  = { 0,  C_TEXT,   -1, (unsigned short)&cfg_lbl_s,        8, 22,  52,  8, 0 };
+_transfer Ctrl ccc6  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_sl,      64, 22,  30,  8, 0 };
+_transfer Ctrl ccc7  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_no,      96, 22,  42,  8, 0 };
+_transfer Ctrl ccc8  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_fa,     140, 22,  30,  8, 0 };
+_transfer Ctrl ccc9  = { 10, C_BUTTON, -1, (unsigned short)"OK",             50, 46,  32, 12, 0 };
+_transfer Ctrl ccc10 = { 11, C_BUTTON, -1, (unsigned short)"Cancel",         90, 46,  52, 12, 0 };
 
 // Ctrl_Group and Window for the config dialog
 _transfer Ctrl_Group cfgcg;
@@ -433,7 +433,7 @@ static void cfg_open(void)
     rg_speed[0]   = rg_speed[1]   = rg_speed[2]   = rg_speed[3]   = -1;
 
     memset(&cfgcg, 0, sizeof(cfgcg));
-    cfgcg.controls = 12;
+    cfgcg.controls = 11;
     cfgcg.pid      = _sympid;
     cfgcg.first    = &ccc0;
 
