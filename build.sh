@@ -8,3 +8,5 @@ SCC="${SCC:-../scc/bin/cc}"
     -o xroach.sav \
     -h 512 \
     -lgfx
+
+python3 add_preview.py
