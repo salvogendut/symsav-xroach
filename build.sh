@@ -5,6 +5,6 @@ SCC="${SCC:-../scc/bin/cc}"
 
 "$SCC" xroach.c \
     -N "XRoach" \
-    -o xroach.com \
+    -o xroach.sav \
     -h 512 \
     -lgfx

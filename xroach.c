@@ -1,10 +1,11 @@
-// xroach screensaver for SymbOS — improved bug-like roaches
+// xroach screensaver for SymbOS — fullscreen direct-render mode
 // Based on the classic Unix xroach by J.T. Anderson (1991)
 // SymbOS C port by Salvatore Bognanni
-// Improved sprites by ChatGPT
+// Sprites by ChatGPT; fullscreen via Bank_Copy to video RAM
 
 #include <symbos.h>
-#include <graphics.h>
+#include <symbos/msgid.h>
+#include <symbos/keys.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -47,17 +48,16 @@ static const signed char dir_dy[8] = {
      0, -2, -3, -2
 };
 
-// Map movement direction -> sprite
-// 0=E 1=S 2=W 3=N
+// Map direction -> sprite index: 0=E 1=S 2=W 3=N
 
 static const unsigned char dir_spr[8] = {
-    0,0,1,2,2,2,3,0
+    0, 0, 1, 2, 2, 2, 3, 0
 };
 
 // ---------------------------------------------------------------------------
-// ASCII ART SPRITES
-// '.' = background
-// '3' = roach body
+// Sprite ASCII art
+// '.' = background (ink 0)
+// '3' = roach body (ink 3)
 // ---------------------------------------------------------------------------
 
 // EAST
@@ -145,60 +145,138 @@ static const char *roach_S_art[16] = {
 };
 
 // ---------------------------------------------------------------------------
-// Runtime sprite buffers
+// Mode 1 sprite buffers: 16 rows × 4 bytes = 64 bytes per direction
+// 0=E 1=S 2=W 3=N
+// CPC Mode 1 pixel encoding for 4 pixels p0..p3, each 2-bit ink:
+//   byte = (p0_lo<<7)|(p1_lo<<6)|(p2_lo<<5)|(p3_lo<<4)
+//         |(p0_hi<<3)|(p1_hi<<2)|(p2_hi<<1)|(p3_hi<<0)
+// ink 0 (00) -> 0x00;  ink 3 (11) -> 0xFF
 // ---------------------------------------------------------------------------
 
-char spr_E[3 + 128];
-char spr_W[3 + 128];
-char spr_N[3 + 128];
-char spr_S[3 + 128];
+_data unsigned char m1_spr[4][64];
 
-// Sprite pointer table
+// Zero-filled plane buffer used for screen clear (one CPC character plane =
+// 25 char-rows × 80 bytes = 2000 bytes).  BSS = guaranteed zero.
 
-const char *sprites[4] = {
-    spr_E,
-    spr_S,
-    spr_W,
-    spr_N
-};
+_data unsigned char zero_plane[2000];
+
+// 4-byte zero row used for erasing one sprite scan-line
+
+_data unsigned char zero_row[4];
 
 // ---------------------------------------------------------------------------
-// Build SymbOS 4bpp sprite from ASCII art
+// Build Mode 1 bytes from ASCII art
 // ---------------------------------------------------------------------------
 
-static void build_sprite(char *dst, const char **art)
+static void build_m1_sprite(unsigned char *dst, const char **art)
 {
-    int x, y;
-    unsigned char p1, p2;
+    int row, col, px;
+    unsigned char b;
 
-    dst[0] = 0x08;
-    dst[1] = 0x10;
-    dst[2] = 0x10;
-
-    dst += 3;
-
-    for (y = 0; y < 16; y++) {
-
-        for (x = 0; x < 16; x += 2) {
-
-            p1 = (art[y][x] == '3') ? 0x3 : 0x1;
-            p2 = (art[y][x + 1] == '3') ? 0x3 : 0x1;
-
-            *dst++ = (p1 << 4) | p2;
+    for (row = 0; row < 16; row++) {
+        for (col = 0; col < 4; col++) {
+            px = col << 2;
+            // Start with all 4 pixels = ink 1 (black background, 0xF0).
+            // Flip the hi-bit of each body pixel to convert ink 1 → ink 3.
+            b = 0xF0;
+            if (art[row][px + 0] == '3') b |= 0x08;
+            if (art[row][px + 1] == '3') b |= 0x04;
+            if (art[row][px + 2] == '3') b |= 0x02;
+            if (art[row][px + 3] == '3') b |= 0x01;
+            dst[row * 4 + col] = b;
         }
     }
 }
 
+static void init_sprites(void)
+{
+    build_m1_sprite(m1_spr[0], roach_E_art);
+    build_m1_sprite(m1_spr[1], roach_S_art);
+    build_m1_sprite(m1_spr[2], roach_W_art);
+    build_m1_sprite(m1_spr[3], roach_N_art);
+}
+
+// Key_Status() reads a software buffer filled by the desktop — unusable while
+// the desktop is stopped.  Key_Down() polls the kernel's hardware scan table
+// which is always current.  Check all 80 CPC scan codes for any key pressed.
+
+static unsigned char any_key_down(void)
+{
+    unsigned char sc;
+    for (sc = 0; sc < 80; sc++) {
+        if (Key_Down(sc)) return 1;
+    }
+    return 0;
+}
+
+// Fill background buffers with ink 1 (black in SymbOS Mode 1 palette).
+// zero_plane and zero_row are BSS, so we must fill them at runtime.
+
+static void init_screen_buffers(void)
+{
+    memset(zero_plane, 0xF0, sizeof(zero_plane));
+    memset(zero_row,   0xF0, sizeof(zero_row));
+}
+
 // ---------------------------------------------------------------------------
-// Initialize sprites
+// CPC Mode 1 screen address
+// X must be a multiple of 4 (one byte = 4 pixels).
+// addr = 0xC000 + (y/8)*80 + (y%8)*0x800 + x/4
 // ---------------------------------------------------------------------------
 
-static void init_roach_sprites(void)
+static unsigned short scr_addr(int x, int y)
 {
-    build_sprite(spr_E, roach_E_art);
-    build_sprite(spr_W, roach_W_art);
-    build_sprite(spr_N, roach_N_art);
-    build_sprite(spr_S, roach_S_art);
+    return 0xC000u
+         + (unsigned short)(y >> 3) * 80u
+         + (unsigned short)(y & 7)  * 0x800u
+         + (unsigned short)(x >> 2);
+}
+
+// ---------------------------------------------------------------------------
+// Screen operations via Bank_Copy to video RAM (bank 0, 0xC000)
+// ---------------------------------------------------------------------------
+
+static void xr_clear_screen(void)
+{
+    unsigned char k;
+
+    // CPC screen: 8 character planes, each at 0xC000 + k*0x800,
+    // 25 rows × 80 bytes = 2000 bytes each.
+    for (k = 0; k < 8; k++) {
+        Bank_Copy(
+            0,
+            (char *)(0xC000u + (unsigned short)k * 0x0800u),
+            _symbank,
+            (char *)zero_plane,
+            2000u
+        );
+    }
+}
+
+static void xr_erase(int sx, int sy)
+{
+    int row;
+
+    for (row = 0; row < ROACH_H; row++) {
+        Bank_Copy(
+            0, (char *)scr_addr(sx, sy + row),
+            _symbank, (char *)zero_row,
+            4u
+        );
+    }
+}
+
+static void xr_draw(int sx, int sy, unsigned char *spr)
+{
+    int row;
+
+    for (row = 0; row < ROACH_H; row++) {
+        Bank_Copy(
+            0, (char *)scr_addr(sx, sy + row),
+            _symbank, (char *)(spr + row * 4),
+            4u
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -216,38 +294,14 @@ typedef struct {
 Roach roaches[NUM_ROACHES];
 
 // ---------------------------------------------------------------------------
-// Canvas buffers
+// Animation tick — direct screen rendering
 // ---------------------------------------------------------------------------
 
-#define CANVAS_SIZE ((ROACH_W * ROACH_H / 2) + 24)
-
-_data char canvas[NUM_ROACHES][CANVAS_SIZE];
-
-// ---------------------------------------------------------------------------
-// Window/control structures
-// ---------------------------------------------------------------------------
-
-_transfer Ctrl ctrls[1 + NUM_ROACHES];
-_transfer Ctrl_Group ctrlgrp;
-_transfer Window winrec;
-_transfer char empty_str[1];
-
-// ---------------------------------------------------------------------------
-// Animation tick
-// ---------------------------------------------------------------------------
-
-static void anim_tick(signed char wid)
+static void anim_tick(void)
 {
     unsigned char i, spd, spr_idx;
     Roach *r;
-    int nx, ny, turn;
-    const char *spr;
-    int bx0, by0, bx1, by1;
-
-    bx0 = SCREEN_W;
-    by0 = SCREEN_H;
-    bx1 = 0;
-    by1 = 0;
+    int nx, ny, turn, sx;
 
     for (i = 0; i < NUM_ROACHES; i++) {
 
@@ -264,18 +318,16 @@ static void anim_tick(signed char wid)
         if (nx < 0 || nx + ROACH_W > SCREEN_W ||
             ny < 0 || ny + ROACH_H > SCREEN_H) {
 
-            r->dir = (r->dir + 4) & 7;
+            r->dir   = (r->dir + 4) & 7;
             r->steps = 3 + (rand() & 7);
-
             nx = r->x;
             ny = r->y;
         }
 
         if (r->steps == 0) {
 
-            turn = (rand() % 7) - 3;
-
-            r->dir = (r->dir + 8 + turn) & 7;
+            turn     = (rand() % 7) - 3;
+            r->dir   = (r->dir + 8 + turn) & 7;
             r->steps = 10 + (rand() & 31);
 
         } else {
@@ -283,111 +335,85 @@ static void anim_tick(signed char wid)
             r->steps--;
         }
 
-        if (r->ox < bx0) bx0 = r->ox;
-        if (r->oy < by0) by0 = r->oy;
+        // Erase old position (X snapped to 4-pixel grid)
+        sx = r->ox & ~3;
+        xr_erase(sx, r->oy);
 
-        if (r->ox + ROACH_W > bx1)
-            bx1 = r->ox + ROACH_W;
-
-        if (r->oy + ROACH_H > by1)
-            by1 = r->oy + ROACH_H;
-
-        spr_idx = dir_spr[r->dir];
-        spr = sprites[spr_idx];
-
-        Gfx_Select(canvas[i]);
-        Gfx_Clear(canvas[i], COLOR_BLACK);
-        Gfx_Put((char *)spr, 0, 0, PUT_SET);
-
-        r->x = nx;
-        r->y = ny;
-
-        ctrls[1 + i].x = (unsigned short)nx;
-        ctrls[1 + i].y = (unsigned short)ny;
-
-        if (nx < bx0) bx0 = nx;
-        if (ny < by0) by0 = ny;
-
-        if (nx + ROACH_W > bx1)
-            bx1 = nx + ROACH_W;
-
-        if (ny + ROACH_H > by1)
-            by1 = ny + ROACH_H;
-
+        // Draw at new position
+        r->x  = nx;
+        r->y  = ny;
         r->ox = nx;
         r->oy = ny;
-    }
 
-    if (bx0 < 0) bx0 = 0;
-    if (by0 < 0) by0 = 0;
-
-    if (bx1 > SCREEN_W) bx1 = SCREEN_W;
-    if (by1 > SCREEN_H) by1 = SCREEN_H;
-
-    if (bx1 > bx0 && by1 > by0) {
-
-        Win_Redraw_Area(
-            (unsigned char)wid,
-            255,
-            0,
-            (unsigned short)bx0,
-            (unsigned short)by0,
-            (unsigned short)(bx1 - bx0),
-            (unsigned short)(by1 - by0)
-        );
+        spr_idx = dir_spr[r->dir];
+        sx = nx & ~3;
+        xr_draw(sx, ny, m1_spr[spr_idx]);
     }
 }
 
 // ---------------------------------------------------------------------------
-// Start animation
+// Window/control structures (minimal: one C_AREA background)
+// ---------------------------------------------------------------------------
+
+_transfer Ctrl      ctrls[1];
+_transfer Ctrl_Group ctrlgrp;
+_transfer Window    winrec;
+_transfer char      empty_str[1];
+
+// ---------------------------------------------------------------------------
+// Desktop stop / resume
+// ---------------------------------------------------------------------------
+
+static void desktop_stop(unsigned char wid)
+{
+    _symmsg[0] = MSC_DSK_DSKSRV;
+    _symmsg[1] = DSK_SRV_DSKSTP;
+    _symmsg[2] = 0xFF;
+    _symmsg[3] = wid;
+
+    while (Msg_Send(_sympid, 2, _symmsg) == 0);
+
+    Msg_Wait(_sympid, 2, _symmsg, MSR_DSK_DSKSRV);
+}
+
+static void desktop_cont(void)
+{
+    _symmsg[0] = MSC_DSK_DSKSRV;
+    _symmsg[1] = DSK_SRV_DSKCNT;
+
+    while (Msg_Send(_sympid, 2, _symmsg) == 0);
+
+    Idle();
+}
+
+// ---------------------------------------------------------------------------
+// Animation loop
 // ---------------------------------------------------------------------------
 
 void start_animation(void)
 {
     unsigned short resp;
-    signed char wid;
-
-    unsigned char i;
-    unsigned char tick;
-    unsigned char do_scatter;
-
+    signed char    wid;
+    unsigned char  i, tick, do_scatter;
     unsigned short mx0, my0;
 
     srand((unsigned int)Sys_Counter16());
-
-    init_roach_sprites();
-
-    for (i = 0; i < NUM_ROACHES; i++) {
-
-        Gfx_Init(canvas[i], ROACH_W, ROACH_H);
-
-        Gfx_Select(canvas[i]);
-
-        Gfx_Clear(canvas[i], COLOR_BLACK);
-
-        Gfx_Put(spr_E, 0, 0, PUT_SET);
-    }
+    init_sprites();
+    init_screen_buffers();
 
     for (i = 0; i < NUM_ROACHES; i++) {
 
-        roaches[i].x =
-            20 + (rand() % (SCREEN_W - ROACH_W - 40));
-
-        roaches[i].y =
-            20 + (rand() % (SCREEN_H - ROACH_H - 40));
-
-        roaches[i].ox = roaches[i].x;
-        roaches[i].oy = roaches[i].y;
-
-        roaches[i].dir = rand() & 7;
+        roaches[i].x = (20 + (rand() % (SCREEN_W - ROACH_W - 40))) & ~3;
+        roaches[i].y =  20 + (rand() % (SCREEN_H - ROACH_H - 40));
+        roaches[i].ox    = roaches[i].x;
+        roaches[i].oy    = roaches[i].y;
+        roaches[i].dir   = rand() & 7;
         roaches[i].steps = rand() & 31;
         roaches[i].scatter = 0;
     }
 
+    // Open a minimal fullscreen window (provides a valid wid for desktop_stop)
     empty_str[0] = 0;
-
-    tick = 0;
-    do_scatter = 0;
 
     ctrls[0].value  = 0;
     ctrls[0].type   = C_AREA;
@@ -399,46 +425,25 @@ void start_animation(void)
     ctrls[0].h      = SCREEN_H;
     ctrls[0].unused = 0;
 
-    for (i = 0; i < NUM_ROACHES; i++) {
-
-        ctrls[1 + i].value  = 1 + i;
-        ctrls[1 + i].type   = C_IMAGE_EXT;
-        ctrls[1 + i].bank   = -1;
-        ctrls[1 + i].param  = (unsigned short)canvas[i];
-        ctrls[1 + i].x      = roaches[i].x;
-        ctrls[1 + i].y      = roaches[i].y;
-        ctrls[1 + i].w      = ROACH_W;
-        ctrls[1 + i].h      = ROACH_H;
-        ctrls[1 + i].unused = 0;
-    }
-
     memset(&ctrlgrp, 0, sizeof(ctrlgrp));
-
-    ctrlgrp.controls = 1 + NUM_ROACHES;
+    ctrlgrp.controls = 1;
     ctrlgrp.pid      = _sympid;
     ctrlgrp.first    = &ctrls[0];
 
     memset(&winrec, 0, sizeof(winrec));
-
     winrec.state    = WIN_NORMAL;
     winrec.flags    = WIN_NOTTASKBAR | WIN_NOTMOVEABLE;
     winrec.pid      = _sympid;
-
     winrec.x        = 0;
     winrec.y        = 0;
-
     winrec.w        = SCREEN_W;
     winrec.h        = SCREEN_H;
-
     winrec.wfull    = SCREEN_W;
     winrec.hfull    = SCREEN_H;
-
     winrec.wmin     = 32;
     winrec.hmin     = 24;
-
     winrec.wmax     = SCREEN_W;
     winrec.hmax     = SCREEN_H;
-
     winrec.title    = empty_str;
     winrec.status   = empty_str;
     winrec.controls = &ctrlgrp;
@@ -448,16 +453,26 @@ void start_animation(void)
     if (wid < 0)
         return;
 
+    // Stop desktop and take over the screen
+    desktop_stop((unsigned char)wid);
+    xr_clear_screen();
+
     mx0 = Mouse_X();
     my0 = Mouse_Y();
+    tick       = 0;
+    do_scatter = 0;
 
     while (1) {
 
         if (Mouse_X() != mx0 ||
             Mouse_Y() != my0 ||
-            Mouse_Buttons()) {
+            Mouse_Buttons()   ||
+            any_key_down()) {
 
+            desktop_cont();
+            Idle();
             Win_Close((unsigned char)wid);
+            Screen_Redraw();
             return;
         }
 
@@ -469,22 +484,9 @@ void start_animation(void)
 
             case 0:
 
+                desktop_cont();
                 Win_Close((unsigned char)wid);
                 exit(0);
-
-            case MSR_DSK_WCLICK:
-
-                switch (_symmsg[2]) {
-
-                case DSK_ACT_CLOSE:
-                case DSK_ACT_CONTENT:
-                case DSK_ACT_KEY:
-
-                    Win_Close((unsigned char)wid);
-                    return;
-                }
-
-                break;
 
             case MSR_DSK_WFOCUS:
 
@@ -506,12 +508,12 @@ void start_animation(void)
                 for (i = 0; i < NUM_ROACHES; i++) {
 
                     roaches[i].scatter = SCATTER_TICKS;
-                    roaches[i].dir = rand() & 7;
-                    roaches[i].steps = 0;
+                    roaches[i].dir     = rand() & 7;
+                    roaches[i].steps   = 0;
                 }
             }
 
-            anim_tick(wid);
+            anim_tick();
         }
 
         Idle();
@@ -525,8 +527,8 @@ void start_animation(void)
 int main(int argc, char *argv[])
 {
     unsigned short resp;
-    unsigned char got_msg;
-    unsigned char b;
+    unsigned char  got_msg;
+    unsigned char  b;
 
     got_msg = 0;
 
