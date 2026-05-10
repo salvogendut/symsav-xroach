@@ -15,10 +15,10 @@
 #define ROACH_H         16
 #define SCREEN_W        320
 #define SCREEN_H        200
-#define SPEED           3       // pixels per frame (normal)
-#define SCATTER_SPEED   6       // pixels per frame (scattering)
-#define SCATTER_TICKS   25      // frames of scatter movement
-#define FRAME_SKIP      3       // system ticks between animation frames
+#define SPEED           3
+#define SCATTER_SPEED   6
+#define SCATTER_TICKS   25
+#define FRAME_SKIP      4       // ticks between frames (~12 FPS at 50 Hz)
 
 // ---------------------------------------------------------------------------
 // Direction table: 8 compass dirs, 0=E 1=SE 2=S 3=SW 4=W 5=NW 6=N 7=NE
@@ -26,200 +26,141 @@
 static const signed char dir_dx[8] = { 3,  2,  0, -2, -3, -2,  0,  2 };
 static const signed char dir_dy[8] = { 0,  2,  3,  2,  0, -2, -3, -2 };
 
-// Map 8 movement directions to 4 sprite indices: 0=E 1=S 2=W 3=N
+// Map 8 movement dirs to 4 sprite indices: 0=E 1=S 2=W 3=N
 static const unsigned char dir_spr[8] = { 0, 0, 1, 2, 2, 2, 3, 0 };
 
 // ---------------------------------------------------------------------------
-// Sprite data: 4bpp, 16x16 pixels
-// Format: bytew(=8), w(=16), h(=16), then 128 bytes of pixel data
-// Nibble = one pixel: 0xD = grey (background), 0x1 = black (roach)
-// Each byte = two pixels: high nibble = left pixel, low nibble = right pixel
+// Sprite data: 4bpp 16x16, derived from original xroach XBM bitmaps (48x48)
+// scaled to 16x16 via max-pooling. Nibble 0x1=black, 0x8=white(background).
+// sprites[0]=E(0deg) sprites[1]=S(270deg) sprites[2]=W(180deg) sprites[3]=N(90deg)
 // ---------------------------------------------------------------------------
 
-// E sprite: roach facing right, head on right, cerci on left
+// E — roach facing east/right (from roach000.xbm scaled to 16x16)
 static const char spr_E[3 + 128] = {
     0x08, 0x10, 0x10,
-    // row 0
-    0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,
-    // row 1: antenna tip at col 14
-    0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0x1D,
-    // row 2: antenna at col 13
-    0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xD1,0xDD,
-    // row 3: antenna at col 12
-    0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0x1D,0xDD,
-    // row 4: leg at col 1, body cols 3-12
-    0xD1,0xD1,0x11,0x11,0x11,0x11,0x1D,0xDD,
-    // row 5: body cols 3-13 (head wider)
-    0xDD,0xD1,0x11,0x11,0x11,0x11,0x11,0xDD,
-    // row 6: leg at col 1, body cols 3-12
-    0xD1,0xD1,0x11,0x11,0x11,0x11,0x1D,0xDD,
-    // row 7: body cols 3-11
-    0xDD,0xD1,0x11,0x11,0x11,0x1D,0xDD,0xDD,
-    // row 8: leg at col 1, body cols 3-10
-    0xD1,0xD1,0x11,0x11,0x11,0x1D,0xDD,0xDD,
-    // row 9: body cols 3-9
-    0xDD,0xD1,0x11,0x11,0x11,0xDD,0xDD,0xDD,
-    // row 10: tail cols 4-8
-    0xDD,0xDD,0x11,0x11,0x1D,0xDD,0xDD,0xDD,
-    // row 11: cerci at cols 0,2
-    0x1D,0x1D,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,
-    // rows 12-15
-    0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,
-    0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,
-    0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,
-    0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,
+    0x88,0x88,0x88,0x88,0x88,0x88,0x88,0x88,
+    0x88,0x88,0x88,0x88,0x88,0x88,0x88,0x88,
+    0x88,0x88,0x88,0x88,0x88,0x88,0x88,0x88,
+    0x88,0x18,0x88,0x88,0x11,0x88,0x81,0x88,
+    0x88,0x11,0x11,0x81,0x11,0x11,0x18,0x88,
+    0x88,0x88,0x11,0x11,0x11,0x18,0x88,0x88,
+    0x81,0x11,0x11,0x11,0x11,0x11,0x11,0x18,
+    0x81,0x11,0x11,0x11,0x11,0x11,0x18,0x88,
+    0x81,0x11,0x11,0x11,0x11,0x11,0x11,0x18,
+    0x88,0x11,0x11,0x11,0x11,0x11,0x88,0x88,
+    0x88,0x81,0x11,0x11,0x11,0x11,0x18,0x88,
+    0x88,0x11,0x88,0x88,0x18,0x88,0x18,0x88,
+    0x88,0x88,0x88,0x88,0x81,0x88,0x88,0x88,
+    0x88,0x88,0x88,0x88,0x88,0x88,0x88,0x88,
+    0x88,0x88,0x88,0x88,0x88,0x88,0x88,0x88,
+    0x88,0x88,0x88,0x88,0x88,0x88,0x88,0x88,
 };
 
-// W sprite: horizontal mirror of E (head on left, cerci on right)
-static const char spr_W[3 + 128] = {
-    0x08, 0x10, 0x10,
-    // row 0
-    0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,
-    // row 1: antenna tip at col 1
-    0xD1,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,
-    // row 2: antenna at col 2
-    0xDD,0x1D,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,
-    // row 3: antenna at col 3
-    0xDD,0xD1,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,
-    // row 4: body cols 3-12, leg at col 14
-    0xDD,0xD1,0x11,0x11,0x11,0x11,0x1D,0x1D,
-    // row 5: head wider cols 2-12
-    0xDD,0x11,0x11,0x11,0x11,0x11,0x1D,0xDD,
-    // row 6: body cols 3-12, leg at col 14
-    0xDD,0xD1,0x11,0x11,0x11,0x11,0x1D,0x1D,
-    // row 7: body cols 4-12
-    0xDD,0xDD,0x11,0x11,0x11,0x11,0x1D,0xDD,
-    // row 8: body cols 5-12, leg at col 14
-    0xDD,0xDD,0xD1,0x11,0x11,0x11,0x1D,0x1D,
-    // row 9: body cols 6-12
-    0xDD,0xDD,0xDD,0xD1,0x11,0x11,0x11,0xDD,
-    // row 10: tail cols 7-11
-    0xDD,0xDD,0xDD,0xD1,0x11,0x11,0xDD,0xDD,
-    // row 11: cerci at cols 13,15
-    0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xD1,0xD1,
-    // rows 12-15
-    0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,
-    0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,
-    0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,
-    0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,
-};
-
-// N sprite: roach facing up, head at top, legs left/right, cerci at bottom
+// N — roach facing north/up (from roach090.xbm)
 static const char spr_N[3 + 128] = {
     0x08, 0x10, 0x10,
-    // row 0: antennae tips at cols 4,11
-    0xDD,0xDD,0x1D,0xDD,0xDD,0xD1,0xDD,0xDD,
-    // row 1: antennae at cols 5,10
-    0xDD,0xDD,0xD1,0xDD,0xDD,0x1D,0xDD,0xDD,
-    // row 2: head antennae base cols 6-9
-    0xDD,0xDD,0xDD,0x11,0x11,0xDD,0xDD,0xDD,
-    // row 3: head cols 5-10
-    0xDD,0xDD,0xD1,0x11,0x11,0x1D,0xDD,0xDD,
-    // row 4: wider head cols 4-11
-    0xDD,0xDD,0x11,0x11,0x11,0x11,0xDD,0xDD,
-    // row 5: thorax cols 3-12
-    0xDD,0xD1,0x11,0x11,0x11,0x11,0x1D,0xDD,
-    // row 6: legs at cols 1,14 + body cols 3-12
-    0xD1,0xD1,0x11,0x11,0x11,0x11,0x1D,0x1D,
-    // row 7: body cols 3-12
-    0xDD,0xD1,0x11,0x11,0x11,0x11,0x1D,0xDD,
-    // row 8: legs at cols 1,14 + body
-    0xD1,0xD1,0x11,0x11,0x11,0x11,0x1D,0x1D,
-    // row 9: body
-    0xDD,0xD1,0x11,0x11,0x11,0x11,0x1D,0xDD,
-    // row 10: legs
-    0xD1,0xD1,0x11,0x11,0x11,0x11,0x1D,0x1D,
-    // row 11: abdomen cols 4-11
-    0xDD,0xDD,0x11,0x11,0x11,0x11,0xDD,0xDD,
-    // row 12: tail cols 5-10
-    0xDD,0xDD,0xD1,0x11,0x11,0x1D,0xDD,0xDD,
-    // row 13: cerci at cols 6,9
-    0xDD,0xDD,0xDD,0x1D,0xD1,0xDD,0xDD,0xDD,
-    // rows 14-15
-    0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,
-    0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,
+    0x88,0x88,0x88,0x88,0x88,0x88,0x88,0x88,
+    0x88,0x88,0x88,0x88,0x81,0x88,0x88,0x88,
+    0x88,0x88,0x88,0x81,0x88,0x88,0x88,0x88,
+    0x88,0x88,0x11,0x11,0x18,0x81,0x88,0x88,
+    0x88,0x88,0x11,0x81,0x18,0x81,0x88,0x88,
+    0x88,0x88,0x11,0x11,0x11,0x11,0x88,0x88,
+    0x88,0x88,0x81,0x11,0x11,0x11,0x18,0x88,
+    0x88,0x81,0x18,0x11,0x11,0x11,0x18,0x88,
+    0x88,0x88,0x11,0x11,0x11,0x11,0x88,0x88,
+    0x88,0x88,0x81,0x11,0x11,0x18,0x88,0x88,
+    0x88,0x88,0x81,0x11,0x11,0x11,0x88,0x88,
+    0x88,0x88,0x11,0x11,0x11,0x11,0x88,0x88,
+    0x88,0x88,0x11,0x11,0x11,0x81,0x88,0x88,
+    0x88,0x88,0x18,0x11,0x11,0x81,0x88,0x88,
+    0x88,0x88,0x88,0x11,0x11,0x88,0x88,0x88,
+    0x88,0x88,0x88,0x88,0x88,0x88,0x88,0x88,
 };
 
-// S sprite: roach facing down = vertical mirror of N
+// W — roach facing west/left (from roach180.xbm)
+static const char spr_W[3 + 128] = {
+    0x08, 0x10, 0x10,
+    0x88,0x88,0x88,0x88,0x88,0x88,0x88,0x88,
+    0x88,0x88,0x88,0x88,0x88,0x88,0x88,0x88,
+    0x88,0x88,0x88,0x88,0x88,0x88,0x88,0x88,
+    0x88,0x88,0x88,0x81,0x88,0x88,0x81,0x88,
+    0x88,0x81,0x11,0x11,0x18,0x81,0x11,0x88,
+    0x88,0x88,0x88,0x11,0x11,0x11,0x88,0x88,
+    0x88,0x88,0x11,0x11,0x11,0x11,0x11,0x18,
+    0x88,0x88,0x11,0x11,0x11,0x11,0x11,0x18,
+    0x88,0x81,0x11,0x11,0x11,0x11,0x11,0x18,
+    0x88,0x18,0x11,0x11,0x11,0x11,0x11,0x18,
+    0x88,0x88,0x11,0x11,0x11,0x11,0x11,0x88,
+    0x88,0x81,0x11,0x81,0x18,0x88,0x81,0x88,
+    0x88,0x88,0x88,0x81,0x88,0x88,0x88,0x18,
+    0x88,0x88,0x88,0x88,0x88,0x88,0x88,0x88,
+    0x88,0x88,0x88,0x88,0x88,0x88,0x88,0x88,
+    0x88,0x88,0x88,0x88,0x88,0x88,0x88,0x88,
+};
+
+// S — roach facing south/down (from roach270.xbm)
 static const char spr_S[3 + 128] = {
     0x08, 0x10, 0x10,
-    // rows 0-1: empty
-    0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,
-    0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,0xDD,
-    // row 2: cerci at cols 6,9 (N row 13 reversed)
-    0xDD,0xDD,0xDD,0x1D,0xD1,0xDD,0xDD,0xDD,
-    // row 3: tail cols 5-10 (N row 12)
-    0xDD,0xDD,0xD1,0x11,0x11,0x1D,0xDD,0xDD,
-    // row 4: abdomen cols 4-11 (N row 11)
-    0xDD,0xDD,0x11,0x11,0x11,0x11,0xDD,0xDD,
-    // row 5: legs (N row 10)
-    0xD1,0xD1,0x11,0x11,0x11,0x11,0x1D,0x1D,
-    // row 6: body (N row 9)
-    0xDD,0xD1,0x11,0x11,0x11,0x11,0x1D,0xDD,
-    // row 7: legs (N row 8)
-    0xD1,0xD1,0x11,0x11,0x11,0x11,0x1D,0x1D,
-    // row 8: body (N row 7)
-    0xDD,0xD1,0x11,0x11,0x11,0x11,0x1D,0xDD,
-    // row 9: legs (N row 6)
-    0xD1,0xD1,0x11,0x11,0x11,0x11,0x1D,0x1D,
-    // row 10: thorax (N row 5)
-    0xDD,0xD1,0x11,0x11,0x11,0x11,0x1D,0xDD,
-    // row 11: wider head (N row 4)
-    0xDD,0xDD,0x11,0x11,0x11,0x11,0xDD,0xDD,
-    // row 12: head (N row 3)
-    0xDD,0xDD,0xD1,0x11,0x11,0x1D,0xDD,0xDD,
-    // row 13: antennae base (N row 2)
-    0xDD,0xDD,0xDD,0x11,0x11,0xDD,0xDD,0xDD,
-    // row 14: antennae (N row 1)
-    0xDD,0xDD,0xD1,0xDD,0xDD,0x1D,0xDD,0xDD,
-    // row 15: antennae tips (N row 0)
-    0xDD,0xDD,0x1D,0xDD,0xDD,0xD1,0xDD,0xDD,
+    0x88,0x88,0x88,0x88,0x88,0x88,0x88,0x88,
+    0x88,0x88,0x88,0x81,0x11,0x88,0x88,0x88,
+    0x88,0x88,0x11,0x11,0x11,0x81,0x18,0x88,
+    0x88,0x88,0x81,0x11,0x11,0x11,0x88,0x88,
+    0x88,0x88,0x81,0x11,0x11,0x11,0x88,0x88,
+    0x88,0x88,0x81,0x11,0x11,0x11,0x88,0x88,
+    0x88,0x88,0x88,0x11,0x11,0x18,0x88,0x88,
+    0x88,0x88,0x11,0x11,0x11,0x11,0x18,0x88,
+    0x88,0x88,0x11,0x11,0x11,0x18,0x18,0x88,
+    0x88,0x88,0x88,0x11,0x11,0x11,0x88,0x88,
+    0x88,0x88,0x81,0x11,0x11,0x11,0x88,0x88,
+    0x88,0x88,0x81,0x11,0x11,0x11,0x88,0x88,
+    0x88,0x88,0x11,0x81,0x11,0x81,0x88,0x88,
+    0x88,0x88,0x18,0x88,0x81,0x81,0x18,0x88,
+    0x88,0x88,0x88,0x88,0x88,0x88,0x88,0x88,
+    0x88,0x88,0x88,0x81,0x88,0x88,0x88,0x88,
 };
 
-// Sprite lookup by 4-sprite index
-static const char * const sprites[4] = {
-    spr_E, spr_S, spr_W, spr_N
-};
+static const char * const sprites[4] = { spr_E, spr_S, spr_W, spr_N };
 
 // ---------------------------------------------------------------------------
 // Roach state
 // ---------------------------------------------------------------------------
 typedef struct {
-    int  x, y;             // current screen position
-    int  ox, oy;           // previous position (for erase)
-    unsigned char dir;     // direction 0-7
-    unsigned char steps;   // steps until next random turn
-    unsigned char scatter; // scatter frames remaining
+    int  x, y;             // current position
+    int  ox, oy;           // previous position (for dirty-region tracking)
+    unsigned char dir;
+    unsigned char steps;
+    unsigned char scatter;
 } Roach;
 
 Roach roaches[NUM_ROACHES];
 
 // ---------------------------------------------------------------------------
-// Canvas buffers: one 16x16 canvas per roach
-// Size = (w * h / 2) + 24 bytes overhead (matches Eyes widget formula)
+// Canvas buffers (one 16x16 4bpp canvas per roach)
 // ---------------------------------------------------------------------------
 #define CANVAS_SIZE  ((ROACH_W * ROACH_H / 2) + 24)
 _data char canvas[NUM_ROACHES][CANVAS_SIZE];
 
 // ---------------------------------------------------------------------------
-// SymbOS window/control structures (must be in transfer area)
+// SymbOS window/control structures
 // ---------------------------------------------------------------------------
-// Controls: [0] background area fill, [1..NUM_ROACHES] roach image controls
-_transfer Ctrl     ctrls[1 + NUM_ROACHES];
+_transfer Ctrl      ctrls[1 + NUM_ROACHES];
 _transfer Ctrl_Group ctrlgrp;
-_transfer Window   winrec;
-_transfer char     empty_str[1];
-_transfer char     timer_stack[512];
+_transfer Window    winrec;
+_transfer char      empty_str[1];
+_transfer char      timer_stack[512];
 _transfer ProcHeader timer_hdr;
 
 // ---------------------------------------------------------------------------
-// Shared state between main and timer
+// Shared state
 // ---------------------------------------------------------------------------
-volatile signed char  win_id    = -1;
+volatile signed char   win_id     = -1;
 volatile unsigned char do_scatter = 0;
 
 // ---------------------------------------------------------------------------
-// Timer process: animation loop
+// Timer process
+// ONE Win_Redraw_Area call per frame, covering only the union of dirty areas.
+// Full-window repaints (~32 KB) on a Z80 freeze the mouse; small dirty
+// regions (~few hundred pixels) leave plenty of CPU for the desktop.
 // ---------------------------------------------------------------------------
 void timer_loop(void) {
     unsigned char i, spd, spr_idx;
@@ -227,15 +168,15 @@ void timer_loop(void) {
     Roach *r;
     int nx, ny;
     const char *spr;
+    int turn;
+    int bx0, by0, bx1, by1;
 
     while (1) {
-        // Only animate every FRAME_SKIP system ticks
         if (++tick < FRAME_SKIP) { Idle(); continue; }
         tick = 0;
 
         if (win_id < 0) { Idle(); continue; }
 
-        // Pick up scatter trigger from main process
         if (do_scatter) {
             do_scatter = 0;
             for (i = 0; i < NUM_ROACHES; i++) {
@@ -245,20 +186,22 @@ void timer_loop(void) {
             }
         }
 
+        // Start with inverted bbox
+        bx0 = SCREEN_W; by0 = SCREEN_H; bx1 = 0; by1 = 0;
+
         for (i = 0; i < NUM_ROACHES; i++) {
             r = &roaches[i];
 
             spd = r->scatter ? SCATTER_SPEED : SPEED;
             if (r->scatter) r->scatter--;
 
-            // Attempt move in current direction
-            nx = r->x + dir_dx[r->dir] * spd;
-            ny = r->y + dir_dy[r->dir] * spd;
+            nx = r->x + (int)dir_dx[r->dir] * (int)spd;
+            ny = r->y + (int)dir_dy[r->dir] * (int)spd;
 
-            // Bounce at screen edges: reverse direction
+            // Bounce at screen edges
             if (nx < 0 || nx + ROACH_W > SCREEN_W ||
                 ny < 0 || ny + ROACH_H > SCREEN_H) {
-                r->dir   = (r->dir + 4) & 7; // opposite
+                r->dir   = (r->dir + 4) & 7;
                 r->steps = 3 + (unsigned char)(rand() & 7);
                 nx = r->x;
                 ny = r->y;
@@ -266,43 +209,55 @@ void timer_loop(void) {
 
             // Random turn
             if (r->steps == 0) {
-                // Turn left or right by 1-3 directions
-                int turn = (rand() % 7) - 3;  // -3 to +3
+                turn     = (rand() % 7) - 3;
                 r->dir   = (unsigned char)((r->dir + 8 + turn) & 7);
                 r->steps = (unsigned char)(10 + (rand() & 31));
             } else {
                 r->steps--;
             }
 
-            // Update sprite canvas for new direction
+            // Include old position in dirty bbox (for erase)
+            if (r->ox < bx0) bx0 = r->ox;
+            if (r->oy < by0) by0 = r->oy;
+            if (r->ox + ROACH_W > bx1) bx1 = r->ox + ROACH_W;
+            if (r->oy + ROACH_H > by1) by1 = r->oy + ROACH_H;
+
+            // Update canvas with current direction sprite
             spr_idx = dir_spr[r->dir];
-            spr = sprites[spr_idx];
+            spr     = sprites[spr_idx];
             Gfx_Select(canvas[i]);
-            Gfx_Clear(canvas[i], 0xD);
+            Gfx_Clear(canvas[i], COLOR_WHITE);
             Gfx_Put((char *)spr, 0, 0, PUT_SET);
 
-            // Move control to new position BEFORE erasing old area.
-            // When the desktop redraws old area, the control is at the new
-            // position so only the background fills the old spot.
+            // Move control to new position
             r->x = nx;
             r->y = ny;
             ctrls[1 + i].x = (unsigned short)nx;
             ctrls[1 + i].y = (unsigned short)ny;
 
-            // Erase old position (control is now at new pos, so bg fills here)
-            if (r->ox >= 0) {
-                Win_Redraw_Area((unsigned char)win_id, 255, 0,
-                                (unsigned short)r->ox, (unsigned short)r->oy,
-                                ROACH_W, ROACH_H);
-            }
-
-            // Draw roach at new position
-            Win_Redraw_Area((unsigned char)win_id, 255, 0,
-                            (unsigned short)nx, (unsigned short)ny,
-                            ROACH_W, ROACH_H);
+            // Include new position in dirty bbox (for draw)
+            if (nx     < bx0) bx0 = nx;
+            if (ny     < by0) by0 = ny;
+            if (nx + ROACH_W > bx1) bx1 = nx + ROACH_W;
+            if (ny + ROACH_H > by1) by1 = ny + ROACH_H;
 
             r->ox = nx;
             r->oy = ny;
+        }
+
+        // Clamp to screen bounds
+        if (bx0 < 0)       bx0 = 0;
+        if (by0 < 0)       by0 = 0;
+        if (bx1 > SCREEN_W) bx1 = SCREEN_W;
+        if (by1 > SCREEN_H) by1 = SCREEN_H;
+
+        // ONE repaint covering only dirty area — C_AREA bg erases old positions,
+        // C_IMAGE_EXT controls draw roaches at new positions.
+        if (bx1 > bx0 && by1 > by0) {
+            Win_Redraw_Area((unsigned char)win_id, 255, 0,
+                            (unsigned short)bx0, (unsigned short)by0,
+                            (unsigned short)(bx1 - bx0),
+                            (unsigned short)(by1 - by0));
         }
 
         Idle();
@@ -314,50 +269,44 @@ void timer_loop(void) {
 // ---------------------------------------------------------------------------
 int main(int argc, char *argv[]) {
     unsigned short resp;
-    unsigned char sender_pid;
     unsigned char i;
     signed char wid;
 
-    // Seed RNG from system counter
     srand((unsigned int)Sys_Counter16());
 
-    // Initialize roach canvases
+    // Init canvases
     for (i = 0; i < NUM_ROACHES; i++) {
         Gfx_Init(canvas[i], ROACH_W, ROACH_H);
         Gfx_Select(canvas[i]);
-        Gfx_Clear(canvas[i], 0xD);
-        // Draw initial E sprite into each canvas
+        Gfx_Clear(canvas[i], COLOR_WHITE);
         Gfx_Put((char *)spr_E, 0, 0, PUT_SET);
     }
 
-    // Scatter initial positions so roaches don't all start in same spot
+    // Initial positions — set ox/oy = initial pos so first frame erases correctly
     for (i = 0; i < NUM_ROACHES; i++) {
-        roaches[i].x      = 20 + (int)(rand() % (SCREEN_W - ROACH_W  - 40));
-        roaches[i].y      = 20 + (int)(rand() % (SCREEN_H - ROACH_H  - 40));
-        roaches[i].ox     = -1;
-        roaches[i].oy     = -1;
-        roaches[i].dir    = (unsigned char)(rand() & 7);
-        roaches[i].steps  = (unsigned char)(rand() & 31);
+        roaches[i].x       = 20 + (int)(rand() % (SCREEN_W - ROACH_W - 40));
+        roaches[i].y       = 20 + (int)(rand() % (SCREEN_H - ROACH_H - 40));
+        roaches[i].ox      = roaches[i].x;
+        roaches[i].oy      = roaches[i].y;
+        roaches[i].dir     = (unsigned char)(rand() & 7);
+        roaches[i].steps   = (unsigned char)(rand() & 31);
         roaches[i].scatter = 0;
     }
 
-    // Build control array ---------------------------------------------------
-
     empty_str[0] = 0;
 
-    // Control [0]: full-window background area, grey
-    // C_AREA param: bit7=1 → 16-colour mode, bits 0-3 = colour index 13 (grey)
-    ctrls[0].value = 0;
-    ctrls[0].type  = C_AREA;
-    ctrls[0].bank  = -1;
-    ctrls[0].param = (unsigned short)(AREA_16COLOR | COLOR_GRAY);
-    ctrls[0].x     = 0;
-    ctrls[0].y     = 0;
-    ctrls[0].w     = SCREEN_W;
-    ctrls[0].h     = SCREEN_H;
+    // Background control — white fill
+    ctrls[0].value  = 0;
+    ctrls[0].type   = C_AREA;
+    ctrls[0].bank   = -1;
+    ctrls[0].param  = (unsigned short)(AREA_16COLOR | COLOR_WHITE);
+    ctrls[0].x      = 0;
+    ctrls[0].y      = 0;
+    ctrls[0].w      = SCREEN_W;
+    ctrls[0].h      = SCREEN_H;
     ctrls[0].unused = 0;
 
-    // Controls [1..NUM_ROACHES]: roach image canvases
+    // Roach image controls
     for (i = 0; i < NUM_ROACHES; i++) {
         ctrls[1 + i].value  = (unsigned short)(1 + i);
         ctrls[1 + i].type   = C_IMAGE_EXT;
@@ -370,15 +319,13 @@ int main(int argc, char *argv[]) {
         ctrls[1 + i].unused = 0;
     }
 
-    // Control group --------------------------------------------------------
     memset(&ctrlgrp, 0, sizeof(ctrlgrp));
     ctrlgrp.controls = 1 + NUM_ROACHES;
     ctrlgrp.pid      = _sympid;
     ctrlgrp.first    = &ctrls[0];
 
-    // Window record --------------------------------------------------------
     memset(&winrec, 0, sizeof(winrec));
-    winrec.state    = WIN_NORMAL;          // open normally (not centered—place at 0,0)
+    winrec.state    = WIN_NORMAL;
     winrec.flags    = WIN_NOTTASKBAR | WIN_NOTMOVEABLE;
     winrec.pid      = _sympid;
     winrec.x        = 0;
@@ -395,43 +342,39 @@ int main(int argc, char *argv[]) {
     winrec.status   = empty_str;
     winrec.controls = &ctrlgrp;
 
-    // Open window ----------------------------------------------------------
     wid = Win_Open(_symbank, &winrec);
     if (wid < 0) exit(1);
     win_id = wid;
 
-    // Start animation timer ------------------------------------------------
     memset(&timer_hdr, 0, sizeof(timer_hdr));
     timer_hdr.startAddr = timer_loop;
     Timer_Add(_symbank, &timer_hdr);
 
-    // Event loop -----------------------------------------------------------
+    // Event loop — any click or key press closes the app
     while (1) {
         resp = Msg_Sleep(_sympid, -1, _symmsg);
         if (!(resp & 1)) continue;
 
-        sender_pid = (unsigned char)(resp >> 8);
-
         switch (_symmsg[0]) {
         case 0:
-            // Close request from OS
             Win_Close((unsigned char)win_id);
             exit(0);
             break;
 
         case MSR_DSK_WCLICK:
-            if (_symmsg[2] == DSK_ACT_CLOSE) {
+            switch (_symmsg[2]) {
+            case DSK_ACT_CLOSE:
+            case DSK_ACT_CONTENT:  // click anywhere on window → quit
+            case DSK_ACT_KEY:      // any key press → quit
                 Win_Close((unsigned char)win_id);
                 exit(0);
+                break;
             }
             break;
 
         case MSR_DSK_WFOCUS:
-            // Our window gained focus = another window was closed on top of us
-            // Scatter the roaches!
-            if (_symmsg[2] == 1) {
+            if (_symmsg[2] == 1)
                 do_scatter = 1;
-            }
             break;
         }
     }
