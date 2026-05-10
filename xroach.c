@@ -22,13 +22,12 @@
 // Configuration
 // ---------------------------------------------------------------------------
 
-#define NUM_ROACHES     6
+#define MAX_ROACHES     9
 #define ROACH_W         16
 #define ROACH_H         16
 #define SCREEN_W        320
 #define SCREEN_H        200
 
-#define SPEED           3
 #define SCATTER_SPEED   6
 #define SCATTER_TICKS   25
 #define FRAME_SKIP      4
@@ -291,23 +290,23 @@ typedef struct {
     unsigned char scatter;
 } Roach;
 
-Roach roaches[NUM_ROACHES];
+Roach roaches[MAX_ROACHES];
 
 // ---------------------------------------------------------------------------
 // Animation tick — direct screen rendering
 // ---------------------------------------------------------------------------
 
-static void anim_tick(void)
+static void anim_tick(unsigned char num_roaches, unsigned char speed)
 {
     unsigned char i, spd, spr_idx;
     Roach *r;
     int nx, ny, turn, sx;
 
-    for (i = 0; i < NUM_ROACHES; i++) {
+    for (i = 0; i < num_roaches; i++) {
 
         r = &roaches[i];
 
-        spd = r->scatter ? SCATTER_SPEED : SPEED;
+        spd = r->scatter ? SCATTER_SPEED : speed;
 
         if (r->scatter)
             r->scatter--;
@@ -352,13 +351,139 @@ static void anim_tick(void)
 }
 
 // ---------------------------------------------------------------------------
-// Window/control structures (minimal: one C_AREA background)
+// Config data and GUI structures
+// ---------------------------------------------------------------------------
+
+// cfgdat[0..3] = "XRCH" magic; [4] = roach count; [5] = speed
+_transfer char cfgdat[6]      = { 'X', 'R', 'C', 'H', 6, 3 };
+
+// Working copies edited while the config dialog is open
+_transfer char tmp_roaches    = 6;
+_transfer char tmp_speed      = 3;
+
+// Saved PID of the screensaver manager that requested config
+_transfer char cfg_prz        = 0;
+
+// ID of the open config window (-1 = closed)
+_transfer signed char cfgwin_id = -1;
+
+// Radio group coordinate buffers — must be {-1,-1,-1,-1} before first open
+_transfer char rg_roaches[4]  = { -1, -1, -1, -1 };
+_transfer char rg_speed[4]    = { -1, -1, -1, -1 };
+
+// Text/frame descriptors
+_transfer Ctrl_TFrame cfg_tf      = { "Settings", (COLOR_BLACK<<2)|COLOR_ORANGE, 0 };
+_transfer Ctrl_Text   cfg_lbl_r   = { "Roaches:", (COLOR_BLACK<<2)|COLOR_ORANGE, 0 };
+_transfer Ctrl_Text   cfg_lbl_s   = { "Speed:",   (COLOR_BLACK<<2)|COLOR_ORANGE, 0 };
+
+// Radio descriptors — Ctrl_Radio.value is what gets stored in the status var
+_transfer Ctrl_Radio cfg_rad_r3 = { &tmp_roaches, "3",      (COLOR_BLACK<<2)|COLOR_ORANGE, 3, rg_roaches };
+_transfer Ctrl_Radio cfg_rad_r6 = { &tmp_roaches, "6",      (COLOR_BLACK<<2)|COLOR_ORANGE, 6, rg_roaches };
+_transfer Ctrl_Radio cfg_rad_r9 = { &tmp_roaches, "9",      (COLOR_BLACK<<2)|COLOR_ORANGE, 9, rg_roaches };
+_transfer Ctrl_Radio cfg_rad_sl = { &tmp_speed,   "Slow",   (COLOR_BLACK<<2)|COLOR_ORANGE, 1, rg_speed   };
+_transfer Ctrl_Radio cfg_rad_no = { &tmp_speed,   "Normal", (COLOR_BLACK<<2)|COLOR_ORANGE, 3, rg_speed   };
+_transfer Ctrl_Radio cfg_rad_fa = { &tmp_speed,   "Fast",   (COLOR_BLACK<<2)|COLOR_ORANGE, 6, rg_speed   };
+
+// Config dialog controls — must be CONSECUTIVE in transfer segment
+// Layout: 200×62 content area
+//   Frame "Settings" covers rows 0..38
+//   Row 1 (Roaches): y=10  Row 2 (Speed): y=22  Buttons: y=46
+_transfer Ctrl ccc0  = { 0,  C_AREA,   -1, AREA_16COLOR|COLOR_BLACK,          0,  0, 200, 62, 0 };
+_transfer Ctrl ccc1  = { 0,  C_TFRAME, -1, (unsigned short)&cfg_tf,           2,  1, 196, 38, 0 };
+_transfer Ctrl ccc2  = { 0,  C_TEXT,   -1, (unsigned short)&cfg_lbl_r,        8, 10,  52,  8, 0 };
+_transfer Ctrl ccc3  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_r3,      64, 10,  18,  8, 0 };
+_transfer Ctrl ccc4  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_r6,      84, 10,  18,  8, 0 };
+_transfer Ctrl ccc5  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_r9,     104, 10,  18,  8, 0 };
+_transfer Ctrl ccc6  = { 0,  C_TEXT,   -1, (unsigned short)&cfg_lbl_s,        8, 22,  52,  8, 0 };
+_transfer Ctrl ccc7  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_sl,      64, 22,  30,  8, 0 };
+_transfer Ctrl ccc8  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_no,      96, 22,  42,  8, 0 };
+_transfer Ctrl ccc9  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_fa,     140, 22,  30,  8, 0 };
+_transfer Ctrl ccc10 = { 10, C_BUTTON, -1, (unsigned short)"OK",             50, 46,  32, 12, 0 };
+_transfer Ctrl ccc11 = { 11, C_BUTTON, -1, (unsigned short)"Cancel",         90, 46,  52, 12, 0 };
+
+// Ctrl_Group and Window for the config dialog
+_transfer Ctrl_Group cfgcg;
+_transfer Window     cfgwin;
+_transfer char       cfg_title[7] = { 'X', 'R', 'o', 'a', 'c', 'h', 0 };
+
+// ---------------------------------------------------------------------------
+// Window/control structures for the animation window (minimal)
 // ---------------------------------------------------------------------------
 
 _transfer Ctrl      ctrls[1];
 _transfer Ctrl_Group ctrlgrp;
 _transfer Window    winrec;
 _transfer char      empty_str[1];
+
+// ---------------------------------------------------------------------------
+// Config dialog helpers
+// ---------------------------------------------------------------------------
+
+static void cfg_open(void)
+{
+    if (cfgwin_id >= 0)
+        return;
+
+    // Copy current config into working vars
+    tmp_roaches = cfgdat[4];
+    tmp_speed   = cfgdat[5];
+
+    // Reset radio group coordinate buffers so SymbOS starts fresh
+    rg_roaches[0] = rg_roaches[1] = rg_roaches[2] = rg_roaches[3] = -1;
+    rg_speed[0]   = rg_speed[1]   = rg_speed[2]   = rg_speed[3]   = -1;
+
+    memset(&cfgcg, 0, sizeof(cfgcg));
+    cfgcg.controls = 12;
+    cfgcg.pid      = _sympid;
+    cfgcg.first    = &ccc0;
+
+    memset(&cfgwin, 0, sizeof(cfgwin));
+    cfgwin.state    = WIN_NORMAL;
+    cfgwin.flags    = WIN_TITLE | WIN_CENTERED | WIN_NOTTASKBAR;
+    cfgwin.pid      = _sympid;
+    cfgwin.w        = 200;
+    cfgwin.h        = 62;
+    cfgwin.wfull    = 200;
+    cfgwin.hfull    = 62;
+    cfgwin.wmin     = 200;
+    cfgwin.hmin     = 62;
+    cfgwin.wmax     = 200;
+    cfgwin.hmax     = 62;
+    cfgwin.title    = cfg_title;
+    cfgwin.controls = &cfgcg;
+
+    cfgwin_id = Win_Open(_symbank, &cfgwin);
+}
+
+static void cfg_close(void)
+{
+    if (cfgwin_id < 0)
+        return;
+    Win_Close((unsigned char)cfgwin_id);
+    cfgwin_id = -1;
+}
+
+static void cfg_ok(void)
+{
+    cfgdat[4] = tmp_roaches;
+    cfgdat[5] = tmp_speed;
+    cfg_close();
+
+    if (cfg_prz) {
+        _symmsg[0] = MSR_SAV_CONFIG;
+        _symmsg[1] = _symbank;
+        _symmsg[2] = (char)((unsigned short)cfgdat & 0xFF);
+        _symmsg[3] = (char)((unsigned short)cfgdat >> 8);
+        while (!Msg_Send(cfg_prz, _sympid, _symmsg));
+        cfg_prz = 0;
+    }
+}
+
+static void cfg_cancel(void)
+{
+    cfg_close();
+    cfg_prz = 0;
+}
 
 // ---------------------------------------------------------------------------
 // Desktop stop / resume
@@ -396,12 +521,19 @@ void start_animation(void)
     signed char    wid;
     unsigned char  i, tick, do_scatter;
     unsigned short mx0, my0;
+    unsigned char  num_roaches, speed;
+
+    num_roaches = (unsigned char)cfgdat[4];
+    speed       = (unsigned char)cfgdat[5];
+
+    if (num_roaches < 1 || num_roaches > MAX_ROACHES) num_roaches = 6;
+    if (speed < 1 || speed > 9)                       speed = 3;
 
     srand((unsigned int)Sys_Counter16());
     init_sprites();
     init_screen_buffers();
 
-    for (i = 0; i < NUM_ROACHES; i++) {
+    for (i = 0; i < num_roaches; i++) {
 
         roaches[i].x = (20 + (rand() % (SCREEN_W - ROACH_W - 40))) & ~3;
         roaches[i].y =  20 + (rand() % (SCREEN_H - ROACH_H - 40));
@@ -505,7 +637,7 @@ void start_animation(void)
 
                 do_scatter = 0;
 
-                for (i = 0; i < NUM_ROACHES; i++) {
+                for (i = 0; i < num_roaches; i++) {
 
                     roaches[i].scatter = SCATTER_TICKS;
                     roaches[i].dir     = rand() & 7;
@@ -513,7 +645,7 @@ void start_animation(void)
                 }
             }
 
-            anim_tick();
+            anim_tick(num_roaches, speed);
         }
 
         Idle();
@@ -529,8 +661,11 @@ int main(int argc, char *argv[])
     unsigned short resp;
     unsigned char  got_msg;
     unsigned char  b;
+    unsigned char  sender;
+    char           init_tmp[6];
 
     got_msg = 0;
+    sender  = 0;
 
     for (b = 0; b < 10; b++) {
 
@@ -541,6 +676,7 @@ int main(int argc, char *argv[])
         if (resp & 0x01) {
 
             got_msg = 1;
+            sender  = (unsigned char)(resp >> 8);
             break;
         }
     }
@@ -561,6 +697,19 @@ int main(int argc, char *argv[])
 
         case MSC_SAV_INIT:
 
+            // Screensaver manager passes saved config: bank in [1], addr in [2/3]
+            Bank_Copy(
+                _symbank, init_tmp,
+                (unsigned char)_symmsg[1],
+                (char *)((unsigned short)((unsigned char)_symmsg[3] << 8)
+                         | (unsigned char)_symmsg[2]),
+                6
+            );
+            if (init_tmp[0] == 'X' && init_tmp[1] == 'R' &&
+                init_tmp[2] == 'C' && init_tmp[3] == 'H') {
+                cfgdat[4] = init_tmp[4];
+                cfgdat[5] = init_tmp[5];
+            }
             break;
 
         case MSC_SAV_START:
@@ -570,6 +719,29 @@ int main(int argc, char *argv[])
 
         case MSC_SAV_CONFIG:
 
+            cfg_prz = sender;
+            cfg_open();
+            break;
+
+        default:
+
+            // Config window click messages
+            if ((unsigned char)_symmsg[0] == MSR_DSK_WCLICK &&
+                cfgwin_id >= 0 &&
+                (unsigned char)_symmsg[1] == (unsigned char)cfgwin_id) {
+
+                if ((unsigned char)_symmsg[2] == DSK_ACT_CLOSE) {
+
+                    cfg_cancel();
+
+                } else if ((unsigned char)_symmsg[2] == DSK_ACT_CONTENT) {
+
+                    if ((unsigned char)_symmsg[8] == 10)
+                        cfg_ok();
+                    else if ((unsigned char)_symmsg[8] == 11)
+                        cfg_cancel();
+                }
+            }
             break;
         }
 
@@ -578,5 +750,7 @@ int main(int argc, char *argv[])
             resp = Msg_Sleep(_sympid, -1, _symmsg);
 
         } while (!(resp & 0x01));
+
+        sender = (unsigned char)(resp >> 8);
     }
 }
