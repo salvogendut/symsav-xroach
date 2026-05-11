@@ -31,6 +31,7 @@
 #define SCATTER_SPEED   6
 #define SCATTER_TICKS   25
 #define FRAME_SKIP      4
+#define FLEE_DIST       64
 
 // ---------------------------------------------------------------------------
 // Direction table
@@ -153,6 +154,7 @@ static const char *roach_S_art[16] = {
 // ---------------------------------------------------------------------------
 
 _data unsigned char m1_spr[4][64];
+_data unsigned char m1_spr_white[4][64];  // ink 2 (0x0F per all-body byte)
 
 // Zero-filled plane buffer used for screen clear (one CPC character plane =
 // 25 char-rows × 80 bytes = 2000 bytes).  BSS = guaranteed zero.
@@ -167,7 +169,11 @@ _data unsigned char zero_row[4];
 // Build Mode 1 bytes from ASCII art
 // ---------------------------------------------------------------------------
 
-static void build_m1_sprite(unsigned char *dst, const char **art)
+// ink2=0: body pixels → ink 3 (set lo-nibble bit on top of ink-1 background)
+// ink2=1: body pixels → ink 2 (swap: clear hi-nibble bit, set lo-nibble bit)
+
+static void build_sprite(unsigned char *dst, const char **art,
+                         unsigned char ink2)
 {
     int row, col, px;
     unsigned char b;
@@ -175,24 +181,33 @@ static void build_m1_sprite(unsigned char *dst, const char **art)
     for (row = 0; row < 16; row++) {
         for (col = 0; col < 4; col++) {
             px = col << 2;
-            // Start with all 4 pixels = ink 1 (black background, 0xF0).
-            // Flip the hi-bit of each body pixel to convert ink 1 → ink 3.
             b = 0xF0;
-            if (art[row][px + 0] == '3') b |= 0x08;
-            if (art[row][px + 1] == '3') b |= 0x04;
-            if (art[row][px + 2] == '3') b |= 0x02;
-            if (art[row][px + 3] == '3') b |= 0x01;
-            dst[row * 4 + col] = b;
+            if (ink2) {
+                if (art[row][px+0]=='3'){b&=~0x80;b|=0x08;}
+                if (art[row][px+1]=='3'){b&=~0x40;b|=0x04;}
+                if (art[row][px+2]=='3'){b&=~0x20;b|=0x02;}
+                if (art[row][px+3]=='3'){b&=~0x10;b|=0x01;}
+            } else {
+                if (art[row][px+0]=='3') b|=0x08;
+                if (art[row][px+1]=='3') b|=0x04;
+                if (art[row][px+2]=='3') b|=0x02;
+                if (art[row][px+3]=='3') b|=0x01;
+            }
+            dst[row*4+col] = b;
         }
     }
 }
 
 static void init_sprites(void)
 {
-    build_m1_sprite(m1_spr[0], roach_E_art);
-    build_m1_sprite(m1_spr[1], roach_S_art);
-    build_m1_sprite(m1_spr[2], roach_W_art);
-    build_m1_sprite(m1_spr[3], roach_N_art);
+    build_sprite(m1_spr[0], roach_E_art, 0);
+    build_sprite(m1_spr[1], roach_S_art, 0);
+    build_sprite(m1_spr[2], roach_W_art, 0);
+    build_sprite(m1_spr[3], roach_N_art, 0);
+    build_sprite(m1_spr_white[0], roach_E_art, 1);
+    build_sprite(m1_spr_white[1], roach_S_art, 1);
+    build_sprite(m1_spr_white[2], roach_W_art, 1);
+    build_sprite(m1_spr_white[3], roach_N_art, 1);
 }
 
 // Key_Status() reads a software buffer filled by the desktop — unusable while
@@ -291,20 +306,83 @@ typedef struct {
 } Roach;
 
 Roach roaches[MAX_ROACHES];
+Roach white_roach;
+
+// ---------------------------------------------------------------------------
+// Direction helper: returns the direction index most aligned with (dx, dy)
+// ---------------------------------------------------------------------------
+
+static unsigned char best_dir(int dx, int dy)
+{
+    unsigned char best, i;
+    int best_dot, dot;
+    best     = 0;
+    best_dot = -32000;
+    for (i = 0; i < 8; i++) {
+        dot = (int)dir_dx[i] * dx + (int)dir_dy[i] * dy;
+        if (dot > best_dot) { best_dot = dot; best = i; }
+    }
+    return best;
+}
 
 // ---------------------------------------------------------------------------
 // Animation tick — direct screen rendering
+// behavior: 0 = flee from white roach, 1 = chase white roach
 // ---------------------------------------------------------------------------
 
-static void anim_tick(unsigned char num_roaches, unsigned char speed)
+static void anim_tick(unsigned char num_roaches, unsigned char speed,
+                      unsigned char behavior)
 {
     unsigned char i, spd, spr_idx;
     Roach *r;
-    int nx, ny, turn, sx;
+    int nx, ny, sx;
+    int wdx, wdy, wdist;
 
+    // --- Move white roach (wanders, ignores other roaches) ---
+    {
+        Roach *w = &white_roach;
+
+        nx = w->x + (int)dir_dx[w->dir] * SCATTER_SPEED;
+        ny = w->y + (int)dir_dy[w->dir] * SCATTER_SPEED;
+
+        if (nx < 0 || nx + ROACH_W > SCREEN_W ||
+            ny < 0 || ny + ROACH_H > SCREEN_H) {
+            w->dir   = (w->dir + 4) & 7;
+            w->steps = 3 + (rand() & 7);
+            nx = w->x;
+            ny = w->y;
+        }
+
+        if (w->steps == 0) {
+            w->dir   = (w->dir + 8 + (rand() % 7) - 3) & 7;
+            w->steps = 10 + (rand() & 31);
+        } else {
+            w->steps--;
+        }
+
+        sx = w->ox & ~3;
+        xr_erase(sx, w->oy);
+        w->x = nx; w->y = ny; w->ox = nx; w->oy = ny;
+        spr_idx = dir_spr[w->dir];
+        xr_draw(nx & ~3, ny, m1_spr_white[spr_idx]);
+    }
+
+    // --- Move regular roaches ---
     for (i = 0; i < num_roaches; i++) {
 
         r = &roaches[i];
+
+        // React to white roach proximity
+        wdx   = r->x - white_roach.x;
+        wdy   = r->y - white_roach.y;
+        wdist = (wdx < 0 ? -wdx : wdx) + (wdy < 0 ? -wdy : wdy);
+        if (wdist < FLEE_DIST) {
+            // flee: away from white (aligned with wdx,wdy)
+            // chase: toward white (aligned with -wdx,-wdy)
+            r->dir    = behavior ? best_dir(-wdx, -wdy) : best_dir(wdx, wdy);
+            r->scatter = SCATTER_TICKS;
+            r->steps   = 8;
+        }
 
         spd = r->scatter ? SCATTER_SPEED : speed;
 
@@ -325,8 +403,7 @@ static void anim_tick(unsigned char num_roaches, unsigned char speed)
 
         if (r->steps == 0) {
 
-            turn     = (rand() % 7) - 3;
-            r->dir   = (r->dir + 8 + turn) & 7;
+            r->dir   = (r->dir + 8 + (rand() % 7) - 3) & 7;
             r->steps = 10 + (rand() & 31);
 
         } else {
@@ -334,19 +411,16 @@ static void anim_tick(unsigned char num_roaches, unsigned char speed)
             r->steps--;
         }
 
-        // Erase old position (X snapped to 4-pixel grid)
         sx = r->ox & ~3;
         xr_erase(sx, r->oy);
 
-        // Draw at new position
         r->x  = nx;
         r->y  = ny;
         r->ox = nx;
         r->oy = ny;
 
         spr_idx = dir_spr[r->dir];
-        sx = nx & ~3;
-        xr_draw(sx, ny, m1_spr[spr_idx]);
+        xr_draw(nx & ~3, ny, m1_spr[spr_idx]);
     }
 }
 
@@ -354,12 +428,13 @@ static void anim_tick(unsigned char num_roaches, unsigned char speed)
 // Config data and GUI structures
 // ---------------------------------------------------------------------------
 
-// cfgdat[0..3] = "XRCH" magic; [4] = roach count; [5] = speed
-_transfer char cfgdat[6]      = { 'X', 'R', 'C', 'H', 6, 3 };
+// cfgdat[0..3] = "XRCH" magic; [4] = roach count; [5] = speed; [6] = behavior
+_transfer char cfgdat[7]      = { 'X', 'R', 'C', 'H', 6, 3, 0 };
 
 // Working copies edited while the config dialog is open
 _transfer char tmp_roaches    = 6;
 _transfer char tmp_speed      = 3;
+_transfer char tmp_behavior   = 0;  // 0=flee, 1=chase
 
 // Saved PID of the screensaver manager that requested config
 _transfer char cfg_prz        = 0;
@@ -368,28 +443,33 @@ _transfer char cfg_prz        = 0;
 _transfer signed char cfgwin_id = -1;
 
 // Radio group coordinate buffers — must be {-1,-1,-1,-1} before first open
-_transfer char rg_roaches[4]  = { -1, -1, -1, -1 };
-_transfer char rg_speed[4]    = { -1, -1, -1, -1 };
+_transfer char rg_roaches[4]   = { -1, -1, -1, -1 };
+_transfer char rg_speed[4]     = { -1, -1, -1, -1 };
+_transfer char rg_behavior[4]  = { -1, -1, -1, -1 };
 
 // Text/frame descriptors
 _transfer Ctrl_TFrame cfg_tf      = { "Settings", (COLOR_BLACK<<2)|COLOR_ORANGE, 0 };
 _transfer Ctrl_Text   cfg_lbl_r   = { "Roaches:", (COLOR_BLACK<<2)|COLOR_ORANGE, 0 };
 _transfer Ctrl_Text   cfg_lbl_s   = { "Speed:",   (COLOR_BLACK<<2)|COLOR_ORANGE, 0 };
+_transfer Ctrl_Text   cfg_lbl_b   = { "Behavior:",(COLOR_BLACK<<2)|COLOR_ORANGE, 0 };
 
 // Radio descriptors — Ctrl_Radio.value is what gets stored in the status var
-_transfer Ctrl_Radio cfg_rad_r3 = { &tmp_roaches, "3",      (COLOR_BLACK<<2)|COLOR_ORANGE, 3, rg_roaches };
-_transfer Ctrl_Radio cfg_rad_r6 = { &tmp_roaches, "6",      (COLOR_BLACK<<2)|COLOR_ORANGE, 6, rg_roaches };
-_transfer Ctrl_Radio cfg_rad_r9 = { &tmp_roaches, "9",      (COLOR_BLACK<<2)|COLOR_ORANGE, 9, rg_roaches };
-_transfer Ctrl_Radio cfg_rad_sl = { &tmp_speed,   "Slow",   (COLOR_BLACK<<2)|COLOR_ORANGE, 1, rg_speed   };
-_transfer Ctrl_Radio cfg_rad_no = { &tmp_speed,   "Normal", (COLOR_BLACK<<2)|COLOR_ORANGE, 3, rg_speed   };
-_transfer Ctrl_Radio cfg_rad_fa = { &tmp_speed,   "Fast",   (COLOR_BLACK<<2)|COLOR_ORANGE, 6, rg_speed   };
+_transfer Ctrl_Radio cfg_rad_r3 = { &tmp_roaches,  "3",      (COLOR_BLACK<<2)|COLOR_ORANGE, 3, rg_roaches  };
+_transfer Ctrl_Radio cfg_rad_r6 = { &tmp_roaches,  "6",      (COLOR_BLACK<<2)|COLOR_ORANGE, 6, rg_roaches  };
+_transfer Ctrl_Radio cfg_rad_r9 = { &tmp_roaches,  "9",      (COLOR_BLACK<<2)|COLOR_ORANGE, 9, rg_roaches  };
+_transfer Ctrl_Radio cfg_rad_sl = { &tmp_speed,    "Slow",   (COLOR_BLACK<<2)|COLOR_ORANGE, 1, rg_speed    };
+_transfer Ctrl_Radio cfg_rad_no = { &tmp_speed,    "Normal", (COLOR_BLACK<<2)|COLOR_ORANGE, 3, rg_speed    };
+_transfer Ctrl_Radio cfg_rad_fa = { &tmp_speed,    "Fast",   (COLOR_BLACK<<2)|COLOR_ORANGE, 6, rg_speed    };
+_transfer Ctrl_Radio cfg_rad_bf = { &tmp_behavior, "Flee",   (COLOR_BLACK<<2)|COLOR_ORANGE, 0, rg_behavior };
+_transfer Ctrl_Radio cfg_rad_bc = { &tmp_behavior, "Chase",  (COLOR_BLACK<<2)|COLOR_ORANGE, 1, rg_behavior };
 
 // Config dialog controls — must be CONSECUTIVE in transfer segment
-// Layout: 200×62 content area
-//   Frame "Settings" covers rows 0..38
-//   Row 1 (Roaches): y=10  Row 2 (Speed): y=22  Buttons: y=46
-_transfer Ctrl ccc0  = { 0,  C_AREA,   -1, COLOR_ORANGE,                      0,  0, 200, 62, 0 };
-_transfer Ctrl ccc1  = { 0,  C_TFRAME, -1, (unsigned short)&cfg_tf,           2,  1, 196, 38, 0 };
+// Layout: 200×74 content area
+//   Frame "Settings" covers rows 0..50
+//   Row 1 (Roaches): y=10  Row 2 (Speed): y=22  Row 3 (Behavior): y=34
+//   Buttons: y=58
+_transfer Ctrl ccc0  = { 0,  C_AREA,   -1, COLOR_ORANGE,                      0,  0, 200, 74, 0 };
+_transfer Ctrl ccc1  = { 0,  C_TFRAME, -1, (unsigned short)&cfg_tf,           2,  1, 196, 50, 0 };
 _transfer Ctrl ccc2  = { 0,  C_TEXT,   -1, (unsigned short)&cfg_lbl_r,        8, 10,  52,  8, 0 };
 _transfer Ctrl ccc3  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_r3,      64, 10,  18,  8, 0 };
 _transfer Ctrl ccc4  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_r6,      84, 10,  18,  8, 0 };
@@ -398,8 +478,11 @@ _transfer Ctrl ccc6  = { 0,  C_TEXT,   -1, (unsigned short)&cfg_lbl_s,        8,
 _transfer Ctrl ccc7  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_sl,      64, 22,  30,  8, 0 };
 _transfer Ctrl ccc8  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_no,      96, 22,  42,  8, 0 };
 _transfer Ctrl ccc9  = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_fa,     140, 22,  30,  8, 0 };
-_transfer Ctrl ccc10 = { 10, C_BUTTON, -1, (unsigned short)"OK",             50, 46,  32, 12, 0 };
-_transfer Ctrl ccc11 = { 11, C_BUTTON, -1, (unsigned short)"Cancel",         90, 46,  52, 12, 0 };
+_transfer Ctrl ccc10 = { 0,  C_TEXT,   -1, (unsigned short)&cfg_lbl_b,        8, 34,  56,  8, 0 };
+_transfer Ctrl ccc11 = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_bf,      68, 34,  30,  8, 0 };
+_transfer Ctrl ccc12 = { 0,  C_RADIO,  -1, (unsigned short)&cfg_rad_bc,     100, 34,  42,  8, 0 };
+_transfer Ctrl ccc13 = { 10, C_BUTTON, -1, (unsigned short)"OK",             50, 58,  32, 12, 0 };
+_transfer Ctrl ccc14 = { 11, C_BUTTON, -1, (unsigned short)"Cancel",         90, 58,  52, 12, 0 };
 
 // Ctrl_Group and Window for the config dialog
 _transfer Ctrl_Group cfgcg;
@@ -425,15 +508,17 @@ static void cfg_open(void)
         return;
 
     // Copy current config into working vars
-    tmp_roaches = cfgdat[4];
-    tmp_speed   = cfgdat[5];
+    tmp_roaches  = cfgdat[4];
+    tmp_speed    = cfgdat[5];
+    tmp_behavior = cfgdat[6];
 
     // Reset radio group coordinate buffers so SymbOS starts fresh
-    rg_roaches[0] = rg_roaches[1] = rg_roaches[2] = rg_roaches[3] = -1;
-    rg_speed[0]   = rg_speed[1]   = rg_speed[2]   = rg_speed[3]   = -1;
+    rg_roaches[0]  = rg_roaches[1]  = rg_roaches[2]  = rg_roaches[3]  = -1;
+    rg_speed[0]    = rg_speed[1]    = rg_speed[2]     = rg_speed[3]    = -1;
+    rg_behavior[0] = rg_behavior[1] = rg_behavior[2]  = rg_behavior[3] = -1;
 
     memset(&cfgcg, 0, sizeof(cfgcg));
-    cfgcg.controls = 12;
+    cfgcg.controls = 15;
     cfgcg.pid      = _sympid;
     cfgcg.first    = &ccc0;
 
@@ -442,13 +527,13 @@ static void cfg_open(void)
     cfgwin.flags    = WIN_TITLE | WIN_CENTERED | WIN_NOTTASKBAR;
     cfgwin.pid      = _sympid;
     cfgwin.w        = 200;
-    cfgwin.h        = 62;
+    cfgwin.h        = 74;
     cfgwin.wfull    = 200;
-    cfgwin.hfull    = 62;
+    cfgwin.hfull    = 74;
     cfgwin.wmin     = 200;
-    cfgwin.hmin     = 62;
+    cfgwin.hmin     = 74;
     cfgwin.wmax     = 200;
-    cfgwin.hmax     = 62;
+    cfgwin.hmax     = 74;
     cfgwin.title    = cfg_title;
     cfgwin.controls = &cfgcg;
 
@@ -467,6 +552,7 @@ static void cfg_ok(void)
 {
     cfgdat[4] = tmp_roaches;
     cfgdat[5] = tmp_speed;
+    cfgdat[6] = tmp_behavior;
     cfg_close();
 
     if (cfg_prz) {
@@ -521,13 +607,15 @@ void start_animation(void)
     signed char    wid;
     unsigned char  i, tick, do_scatter;
     unsigned short mx0, my0;
-    unsigned char  num_roaches, speed;
+    unsigned char  num_roaches, speed, behavior;
 
     num_roaches = (unsigned char)cfgdat[4];
     speed       = (unsigned char)cfgdat[5];
+    behavior    = (unsigned char)cfgdat[6];
 
     if (num_roaches < 1 || num_roaches > MAX_ROACHES) num_roaches = 6;
     if (speed < 1 || speed > 9)                       speed = 3;
+    if (behavior > 1)                                  behavior = 0;
 
     srand((unsigned int)Sys_Counter16());
     init_sprites();
@@ -543,6 +631,14 @@ void start_animation(void)
         roaches[i].steps = rand() & 31;
         roaches[i].scatter = 0;
     }
+
+    white_roach.x = (20 + (rand() % (SCREEN_W - ROACH_W - 40))) & ~3;
+    white_roach.y =  20 + (rand() % (SCREEN_H - ROACH_H - 40));
+    white_roach.ox    = white_roach.x;
+    white_roach.oy    = white_roach.y;
+    white_roach.dir   = rand() & 7;
+    white_roach.steps = rand() & 31;
+    white_roach.scatter = 0;
 
     // Open a minimal fullscreen window (provides a valid wid for desktop_stop)
     empty_str[0] = 0;
@@ -645,7 +741,7 @@ void start_animation(void)
                 }
             }
 
-            anim_tick(num_roaches, speed);
+            anim_tick(num_roaches, speed, behavior);
         }
 
         Idle();
@@ -662,7 +758,7 @@ int main(int argc, char *argv[])
     unsigned char  got_msg;
     unsigned char  b;
     unsigned char  sender;
-    char           init_tmp[6];
+    char           init_tmp[7];
 
     got_msg = 0;
     sender  = 0;
@@ -703,12 +799,13 @@ int main(int argc, char *argv[])
                 (unsigned char)_symmsg[1],
                 (char *)((unsigned short)((unsigned char)_symmsg[3] << 8)
                          | (unsigned char)_symmsg[2]),
-                6
+                7
             );
             if (init_tmp[0] == 'X' && init_tmp[1] == 'R' &&
                 init_tmp[2] == 'C' && init_tmp[3] == 'H') {
                 cfgdat[4] = init_tmp[4];
                 cfgdat[5] = init_tmp[5];
+                cfgdat[6] = init_tmp[6];
             }
             break;
 
