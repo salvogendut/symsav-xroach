@@ -154,7 +154,7 @@ static const char *roach_S_art[16] = {
 // ---------------------------------------------------------------------------
 
 _data unsigned char m1_spr[4][64];
-_data unsigned char m1_spr_white[4][64];  // ink 2 (0x0F per all-body byte)
+_data unsigned char m1_spr_odd[4][64];  // ink 2 (0x0F per all-body byte)
 
 // Zero-filled plane buffer used for screen clear (one CPC character plane =
 // 25 char-rows × 80 bytes = 2000 bytes).  BSS = guaranteed zero.
@@ -172,27 +172,28 @@ _data unsigned char zero_row[4];
 // ink2=0: body pixels → ink 3 (set lo-nibble bit on top of ink-1 background)
 // ink2=1: body pixels → ink 2 (swap: clear hi-nibble bit, set lo-nibble bit)
 
+/* body_ink: 0=ink0, 2=ink2, 3=ink3.  Background is ink1 (0xF0 = black).
+   ink1 background means body encoding per ink value:
+     ink0: clear lo bit  (hi=0 lo=0)
+     ink2: clear lo, set hi  (hi=1 lo=0)
+     ink3: set hi, keep lo   (hi=1 lo=1)  ← normal roaches */
 static void build_sprite(unsigned char *dst, const char **art,
-                         unsigned char ink2)
+                         unsigned char body_ink)
 {
     int row, col, px;
-    unsigned char b;
+    unsigned char b, clr_lo, set_hi;
+
+    clr_lo = 1 - (body_ink & 1);      /* 1 for ink0 and ink2, 0 for ink3 */
+    set_hi = (body_ink >> 1) & 1;     /* 1 for ink2 and ink3, 0 for ink0 */
 
     for (row = 0; row < 16; row++) {
         for (col = 0; col < 4; col++) {
             px = col << 2;
-            b = 0xF0;
-            if (ink2) {
-                if (art[row][px+0]=='3'){b&=~0x80;b|=0x08;}
-                if (art[row][px+1]=='3'){b&=~0x40;b|=0x04;}
-                if (art[row][px+2]=='3'){b&=~0x20;b|=0x02;}
-                if (art[row][px+3]=='3'){b&=~0x10;b|=0x01;}
-            } else {
-                if (art[row][px+0]=='3') b|=0x08;
-                if (art[row][px+1]=='3') b|=0x04;
-                if (art[row][px+2]=='3') b|=0x02;
-                if (art[row][px+3]=='3') b|=0x01;
-            }
+            b = 0xF0;  /* ink1 background — matches screen background */
+            if (art[row][px+0]=='3') { if(clr_lo) b&=~0x80; if(set_hi) b|=0x08; }
+            if (art[row][px+1]=='3') { if(clr_lo) b&=~0x40; if(set_hi) b|=0x04; }
+            if (art[row][px+2]=='3') { if(clr_lo) b&=~0x20; if(set_hi) b|=0x02; }
+            if (art[row][px+3]=='3') { if(clr_lo) b&=~0x10; if(set_hi) b|=0x01; }
             dst[row*4+col] = b;
         }
     }
@@ -200,14 +201,11 @@ static void build_sprite(unsigned char *dst, const char **art,
 
 static void init_sprites(void)
 {
-    build_sprite(m1_spr[0], roach_E_art, 0);
-    build_sprite(m1_spr[1], roach_S_art, 0);
-    build_sprite(m1_spr[2], roach_W_art, 0);
-    build_sprite(m1_spr[3], roach_N_art, 0);
-    build_sprite(m1_spr_white[0], roach_E_art, 1);
-    build_sprite(m1_spr_white[1], roach_S_art, 1);
-    build_sprite(m1_spr_white[2], roach_W_art, 1);
-    build_sprite(m1_spr_white[3], roach_N_art, 1);
+    build_sprite(m1_spr[0], roach_E_art, 3);
+    build_sprite(m1_spr[1], roach_S_art, 3);
+    build_sprite(m1_spr[2], roach_W_art, 3);
+    build_sprite(m1_spr[3], roach_N_art, 3);
+    /* odd roach sprites built by rebuild_odd_sprite() */
 }
 
 // Key_Status() reads a software buffer filled by the desktop — unusable while
@@ -306,7 +304,7 @@ typedef struct {
 } Roach;
 
 Roach roaches[MAX_ROACHES];
-Roach white_roach;
+Roach odd_roach;
 
 // ---------------------------------------------------------------------------
 // Direction helper: returns the direction index most aligned with (dx, dy)
@@ -327,61 +325,101 @@ static unsigned char best_dir(int dx, int dy)
 
 // ---------------------------------------------------------------------------
 // Animation tick — direct screen rendering
-// behavior: 0 = flee from white roach, 1 = chase white roach
+// behavior: 0 = flee from odd roach, 1 = chase odd roach
 // ---------------------------------------------------------------------------
+
+/* Rebuild the odd-roach sprites with a randomly chosen ink (1, 2, or 3). */
+static void rebuild_odd_sprite(void)
+{
+    static const unsigned char inks[3] = { 0, 2, 3 };
+    unsigned char ink = inks[rand() % 3];
+    build_sprite(m1_spr_odd[0], roach_E_art, ink);
+    build_sprite(m1_spr_odd[1], roach_S_art, ink);
+    build_sprite(m1_spr_odd[2], roach_W_art, ink);
+    build_sprite(m1_spr_odd[3], roach_N_art, ink);
+}
+
+/* Randomise positions of all roaches and the odd roach. */
+static void reset_roaches(unsigned char num_roaches)
+{
+    unsigned char i;
+    for (i = 0; i < num_roaches; i++) {
+        roaches[i].x       = (20 + (rand() % (SCREEN_W - ROACH_W - 40))) & ~3;
+        roaches[i].y       =  20 + (rand() % (SCREEN_H - ROACH_H - 40));
+        roaches[i].ox      = roaches[i].x;
+        roaches[i].oy      = roaches[i].y;
+        roaches[i].dir     = rand() & 7;
+        roaches[i].steps   = rand() & 31;
+        roaches[i].scatter = SCATTER_TICKS;
+    }
+    odd_roach.x       = (20 + (rand() % (SCREEN_W - ROACH_W - 40))) & ~3;
+    odd_roach.y       =  20 + (rand() % (SCREEN_H - ROACH_H - 40));
+    odd_roach.ox      = odd_roach.x;
+    odd_roach.oy      = odd_roach.y;
+    odd_roach.dir     = rand() & 7;
+    odd_roach.steps   = rand() & 31;
+    odd_roach.scatter = 0;
+}
 
 static void anim_tick(unsigned char num_roaches, unsigned char speed,
                       unsigned char behavior)
 {
-    unsigned char i, spd, spr_idx;
+    /* All locals at function scope — SCC does not reliably support variables
+       declared inside nested blocks. */
+    unsigned char i, spd, spr_idx, tries, nd;
     Roach *r;
-    int nx, ny, sx;
+    Roach *w;
+    int nx, ny, sx, tnx, tny;
     int wdx, wdy, wdist;
 
-    // --- Move white roach (wanders, ignores other roaches) ---
-    {
-        Roach *w = &white_roach;
+    // --- Move odd roach (wanders, ignores other roaches) ---
+    w = &odd_roach;
 
-        nx = w->x + (int)dir_dx[w->dir] * SCATTER_SPEED;
-        ny = w->y + (int)dir_dy[w->dir] * SCATTER_SPEED;
+    nx = w->x + (int)dir_dx[w->dir] * SCATTER_SPEED;
+    ny = w->y + (int)dir_dy[w->dir] * SCATTER_SPEED;
 
-        if (nx < 0 || nx + ROACH_W > SCREEN_W ||
-            ny < 0 || ny + ROACH_H > SCREEN_H) {
-            w->dir   = (w->dir + 4) & 7;
-            w->steps = 3 + (rand() & 7);
-            nx = w->x;
-            ny = w->y;
-        }
-
-        if (w->steps == 0) {
-            w->dir   = (w->dir + 8 + (rand() % 7) - 3) & 7;
-            w->steps = 10 + (rand() & 31);
-        } else {
-            w->steps--;
-        }
-
-        sx = w->ox & ~3;
-        xr_erase(sx, w->oy);
-        w->x = nx; w->y = ny; w->ox = nx; w->oy = ny;
-        spr_idx = dir_spr[w->dir];
-        xr_draw(nx & ~3, ny, m1_spr_white[spr_idx]);
+    if (nx < 0 || nx + ROACH_W > SCREEN_W ||
+        ny < 0 || ny + ROACH_H > SCREEN_H) {
+        w->dir   = (w->dir + 4) & 7;
+        w->steps = 3 + (rand() & 7);
+        nx = w->x;
+        ny = w->y;
     }
+
+    if (w->steps == 0) {
+        w->dir   = (w->dir + 1 + (rand() & 5)) & 7;
+        w->steps = 10 + (rand() & 31);
+    } else {
+        w->steps--;
+    }
+
+    sx = w->ox & ~3;
+    xr_erase(sx, w->oy);
+    w->x = nx; w->y = ny; w->ox = nx; w->oy = ny;
+    spr_idx = dir_spr[w->dir];
+    xr_draw(nx & ~3, ny, m1_spr_odd[spr_idx]);
 
     // --- Move regular roaches ---
     for (i = 0; i < num_roaches; i++) {
 
         r = &roaches[i];
 
-        // React to white roach proximity
-        wdx   = r->x - white_roach.x;
-        wdy   = r->y - white_roach.y;
+        /* React to odd roach proximity.
+           Validate the flee/chase direction before applying it: if it points
+           into a wall the roach would oscillate in place each tick. */
+        wdx   = r->x - odd_roach.x;
+        wdy   = r->y - odd_roach.y;
         wdist = (wdx < 0 ? -wdx : wdx) + (wdy < 0 ? -wdy : wdy);
         if (wdist < FLEE_DIST) {
-            // flee: away from white (aligned with wdx,wdy)
-            // chase: toward white (aligned with -wdx,-wdy)
-            r->dir    = behavior ? best_dir(-wdx, -wdy) : best_dir(wdx, wdy);
-            r->scatter = SCATTER_TICKS;
-            r->steps   = 8;
+            nd = behavior ? best_dir(-wdx, -wdy) : best_dir(wdx, wdy);
+            tnx = r->x + (int)dir_dx[nd] * SCATTER_SPEED;
+            tny = r->y + (int)dir_dy[nd] * SCATTER_SPEED;
+            if (tnx >= 0 && tnx + ROACH_W <= SCREEN_W &&
+                tny >= 0 && tny + ROACH_H <= SCREEN_H) {
+                r->dir     = nd;
+                r->scatter = SCATTER_TICKS;
+                r->steps   = 8;
+            }
         }
 
         spd = r->scatter ? SCATTER_SPEED : speed;
@@ -395,19 +433,25 @@ static void anim_tick(unsigned char num_roaches, unsigned char speed,
         if (nx < 0 || nx + ROACH_W > SCREEN_W ||
             ny < 0 || ny + ROACH_H > SCREEN_H) {
 
-            r->dir   = (r->dir + 4) & 7;
-            r->steps = 3 + (rand() & 7);
-            nx = r->x;
-            ny = r->y;
+            /* Rotate through all 8 directions to find one that clears the
+               boundary.  Setting steps > 0 prevents the steps-check below
+               from changing direction again on the same tick. */
+            for (tries = 0; tries < 8; tries++) {
+                r->dir = (r->dir + 1) & 7;
+                nx = r->x + (int)dir_dx[r->dir] * (int)spd;
+                ny = r->y + (int)dir_dy[r->dir] * (int)spd;
+                if (nx >= 0 && nx + ROACH_W <= SCREEN_W &&
+                    ny >= 0 && ny + ROACH_H <= SCREEN_H)
+                    break;
+            }
+            if (tries >= 8) { nx = r->x; ny = r->y; }
+            r->steps = 10 + (rand() & 31);
         }
 
         if (r->steps == 0) {
-
-            r->dir   = (r->dir + 8 + (rand() % 7) - 3) & 7;
+            r->dir   = (r->dir + 1 + (rand() & 5)) & 7;
             r->steps = 10 + (rand() & 31);
-
         } else {
-
             r->steps--;
         }
 
@@ -606,7 +650,7 @@ void start_animation(void)
     unsigned short resp;
     signed char    wid;
     unsigned char  i, tick, do_scatter;
-    unsigned short mx0, my0;
+    unsigned short mx0, my0, reset_timer;
     unsigned char  num_roaches, speed, behavior;
 
     num_roaches = (unsigned char)cfgdat[4];
@@ -619,26 +663,9 @@ void start_animation(void)
 
     srand((unsigned int)Sys_Counter16());
     init_sprites();
+    rebuild_odd_sprite();
     init_screen_buffers();
-
-    for (i = 0; i < num_roaches; i++) {
-
-        roaches[i].x = (20 + (rand() % (SCREEN_W - ROACH_W - 40))) & ~3;
-        roaches[i].y =  20 + (rand() % (SCREEN_H - ROACH_H - 40));
-        roaches[i].ox    = roaches[i].x;
-        roaches[i].oy    = roaches[i].y;
-        roaches[i].dir   = rand() & 7;
-        roaches[i].steps = rand() & 31;
-        roaches[i].scatter = 0;
-    }
-
-    white_roach.x = (20 + (rand() % (SCREEN_W - ROACH_W - 40))) & ~3;
-    white_roach.y =  20 + (rand() % (SCREEN_H - ROACH_H - 40));
-    white_roach.ox    = white_roach.x;
-    white_roach.oy    = white_roach.y;
-    white_roach.dir   = rand() & 7;
-    white_roach.steps = rand() & 31;
-    white_roach.scatter = 0;
+    reset_roaches(num_roaches);
 
     // Open a minimal fullscreen window (provides a valid wid for desktop_stop)
     empty_str[0] = 0;
@@ -685,10 +712,11 @@ void start_animation(void)
     desktop_stop((unsigned char)wid);
     xr_clear_screen();
 
-    mx0 = Mouse_X();
-    my0 = Mouse_Y();
-    tick       = 0;
-    do_scatter = 0;
+    mx0         = Mouse_X();
+    my0         = Mouse_Y();
+    tick        = 0;
+    do_scatter  = 0;
+    reset_timer = Sys_Counter16();
 
     while (1) {
 
@@ -742,6 +770,14 @@ void start_animation(void)
             }
 
             anim_tick(num_roaches, speed, behavior);
+
+            /* 36000 × (1/300 s) = 120 s = 2 minutes */
+            if ((unsigned short)(Sys_Counter16() - reset_timer) >= 36000u) {
+                reset_timer = Sys_Counter16();
+                xr_clear_screen();
+                rebuild_odd_sprite();
+                reset_roaches(num_roaches);
+            }
         }
 
         Idle();
