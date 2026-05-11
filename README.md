@@ -4,6 +4,8 @@ A screensaver for [SymbOS](https://www.symbos.org/) inspired by the classic Unix
 
 This version runs fullscreen on the Amstrad CPC, rendering cockroaches directly to video RAM while the desktop is suspended. A config dialog lets the user choose the number of roaches and animation speed.
 
+> **Requirements:** CPC Mode 1 only — 320×200 pixels, 4 colours. Will not work on other screen modes.
+
 **Work in progress.**
 
 ---
