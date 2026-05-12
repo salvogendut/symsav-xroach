@@ -473,7 +473,9 @@ static void anim_tick(unsigned char num_roaches, unsigned char speed,
 // ---------------------------------------------------------------------------
 
 // cfgdat[0..3] = "XRCH" magic; [4] = roach count; [5] = speed; [6] = behavior
-_transfer char cfgdat[7]      = { 'X', 'R', 'C', 'H', 6, 3, 0 };
+// Must be in _data (app bank), not _transfer: the desktop reads it via bank-switching,
+// and the transfer segment is process-local — another process sees its own transfer RAM.
+_data char cfgdat[7];
 
 // Working copies edited while the config dialog is open
 _transfer char tmp_roaches    = 6;
@@ -604,7 +606,7 @@ static void cfg_ok(void)
         _symmsg[1] = _symbank;
         _symmsg[2] = (char)((unsigned short)cfgdat & 0xFF);
         _symmsg[3] = (char)((unsigned short)cfgdat >> 8);
-        while (!Msg_Send(cfg_prz, _sympid, _symmsg));
+        while (!Msg_Send(_sympid, cfg_prz, _symmsg));
         cfg_prz = 0;
     }
 }
@@ -795,6 +797,10 @@ int main(int argc, char *argv[])
     unsigned char  b;
     unsigned char  sender;
     char           init_tmp[7];
+
+    /* _data vars are not statically initialised by SCC — set defaults explicitly */
+    cfgdat[0] = 'X'; cfgdat[1] = 'R'; cfgdat[2] = 'C'; cfgdat[3] = 'H';
+    cfgdat[4] = 6;   cfgdat[5] = 3;   cfgdat[6] = 0;
 
     got_msg = 0;
     sender  = 0;
