@@ -1,3 +1,5 @@
+![Example Image](xroach.png)
+
 # xroach — SymbOS screensaver
 
 A screensaver for [SymbOS](https://www.symbos.org/) inspired by the classic Unix/Linux `xroach` program, which displayed cockroaches scattering across the screen under open windows.
