@@ -4,6 +4,8 @@
 
 A screensaver for [SymbOS](https://www.symbos.org/) inspired by the classic Unix/Linux `xroach` program, which displayed cockroaches scattering across the screen under open windows.
 
+> **Alpha version — use at your own risk.** This software is in an early alpha state and may cause harm to your system. If you choose to try it, you do so entirely at your own risk.
+
 This version runs fullscreen on the Amstrad CPC, rendering cockroaches directly to video RAM while the desktop is suspended. A config dialog lets the user choose the number of roaches and animation speed.
 
 > **Requirements:** CPC Mode 1 only — 320×200 pixels, 4 colours. Will not work on other screen modes for now.
